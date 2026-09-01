@@ -107,9 +107,16 @@ echo '{"session_id":"test"}' | ./hook.py attention   # red
 echo '{"session_id":"test"}' | ./hook.py gone        # back to green
 ```
 
-### The 2 s reset
+### Why colour changes are fast
 
-Opening the serial port asserts DTR, which resets the Uno: the LEDs go dark for
-about 2 s on every colour change. A 10 µF capacitor between `RESET` and `GND`
-(negative leg to GND) disables the auto-reset; with it fitted, drop the `wait`
-default in `light.py`'s `send()` to `0` and colour changes become instant.
+Opening the serial port asserts DTR, which reboots the Uno: on its own, every
+colour change would cost ~2 s of dark LEDs. While *any* process holds the port
+open, further opens no longer reset the board, so the first paint forks a
+keeper that does nothing but sit on the port. Measured: 2.1 s for the first
+change, 50-80 ms for every one after it.
+
+The keeper owns `~/.claude/traffic-light/keeper.lock` for as long as it lives.
+Unplug the board and it exits, releasing the lock; the next colour change
+respawns it and pays the 2 s once more. `send()` needs no coordination with it
+— a missing ack means the board is rebooting, so it waits `light.BOOT` and
+resends.

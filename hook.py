@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from light import send  # noqa: E402
+from light import find_port, hold, send  # noqa: E402
 
 STATE = Path.home() / ".claude" / "traffic-light"
 STALE = 8 * 3600  # a session killed without SessionEnd stops counting after this
@@ -56,9 +56,41 @@ def aggregate():
     return "G"
 
 
+def ensure_keeper():
+    """Keep one detached process sitting on the port.
+
+    Every open of an unheld port reboots the Uno, which is the ~2 s of dark LEDs
+    between colours; while a keeper holds it, a colour change takes ~10 ms. The
+    keeper owns keeper.lock for as long as it lives, so a dead one (board
+    unplugged, process killed) frees the lock and the next paint respawns it.
+    """
+    lock_fd = os.open(str(STATE / "keeper.lock"), os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock_fd)  # somebody else is keeping the port open
+        return
+    if os.fork():
+        os.close(lock_fd)  # send() absorbs the reboot this fork is about to cause
+        return
+    os.setsid()
+    try:
+        hold(find_port())  # holds the port, and keeper.lock with it, until unplugged
+    finally:
+        os._exit(0)
+
+
 def paint():
+    ensure_keeper()  # before the lock below: a forked keeper must not inherit it
     with open(STATE / "lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        for _ in range(50):  # bounded: a wedged painter must not pile up hooks behind it
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            return
         want = aggregate()  # recomputed inside the lock, so a queued write is never stale
         last = STATE / "last"
         if last.exists() and last.read_text() == want:

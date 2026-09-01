@@ -6,6 +6,7 @@
 """Switch the Arduino traffic light over USB serial."""
 
 import glob
+import os
 import sys
 import time
 
@@ -13,6 +14,7 @@ import serial
 
 CMDS = {"red": "R", "yellow": "Y", "green": "G", "off": "O"}
 PATTERNS = ("/dev/cu.usbmodem*", "/dev/ttyACM*")
+BOOT = 1.8  # bootloader delay after a reset; raise if the first write is lost
 
 
 def find_port():
@@ -22,15 +24,31 @@ def find_port():
     return ports[0]
 
 
-def send(char, port=None, wait=2.0):
-    """Send one command byte and return the board's ack (empty string if none)."""
-    with serial.Serial(port or find_port(), 9600, timeout=2) as link:
-        # ponytail: opening the port asserts DTR, which resets the Uno and costs
-        # ~2 s of dark LEDs. A 10 uF cap between RESET and GND kills the
-        # auto-reset; then wait can drop to 0.
-        time.sleep(wait)
+def send(char, port=None):
+    """Send one command byte and return the board's ack (empty string if none).
+
+    Opening the port asserts DTR, which reboots the Uno and swallows the byte --
+    unless another process already holds the port open, in which case the write
+    lands in about 10 ms. So try the fast path first and only pay for the
+    bootloader when the ack goes missing. See hold().
+    """
+    with serial.Serial(port or find_port(), 9600, timeout=0.3) as link:
         link.write(char.encode())
-        return link.readline().decode().strip()
+        ack = link.readline()
+        if not ack:
+            time.sleep(BOOT)
+            link.timeout = 2
+            link.write(char.encode())
+            ack = link.readline()
+        return ack.decode().strip()
+
+
+def hold(port=None):
+    """Keep the port open until the board goes away, so nothing resets it."""
+    port = port or find_port()
+    with serial.Serial(port, 9600, timeout=1):
+        while os.path.exists(port):
+            time.sleep(5)
 
 
 def main(argv):
