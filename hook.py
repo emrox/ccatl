@@ -89,6 +89,10 @@ def ensure_keeper():
     except OSError:
         os.close(lock_fd)  # somebody else is keeping the port open
         return
+    # winning the lock means there was no keeper, so the board is freshly plugged
+    # in or about to be reset by our own open: its LEDs are off, whatever the
+    # cache says. Drop it so the next paint always writes.
+    (STATE / "last").unlink(missing_ok=True)
     if os.fork():
         os.close(lock_fd)  # send() absorbs the reboot this fork is about to cause
         return

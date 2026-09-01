@@ -158,6 +158,12 @@ change, 50-80 ms for every one after it.
 The keeper doubles as the system's only clock: every 5 s it recomputes the
 colour, which is how a cancelled turn or any other missed event heals itself.
 
+Unplugging the board is a non-event: the keeper sees the device node go and
+exits, hooks keep returning 0 with the failing write confined to their detached
+child, and nothing accumulates. On replug the next hook takes the free lock,
+which is also the signal that the cached colour is a lie — a reset board shows
+nothing — so `last` is dropped and the next paint always writes.
+
 The keeper owns `~/.claude/traffic-light/keeper.lock` for as long as it lives.
 Unplug the board and it exits, releasing the lock; the next colour change
 respawns it and pays the 2 s once more. `send()` needs no coordination with it
