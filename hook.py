@@ -35,11 +35,11 @@ COLORS = [("attention", "R"), ("busy", "Y")]  # first match wins, else green
 VALID = {"busy", "attention", "idle", "gone"}
 
 
-def session_id():
+def payload():
     try:
-        return json.load(sys.stdin).get("session_id") or "unknown"
+        return json.loads(sys.stdin.read())
     except Exception:  # no stdin, truncated JSON, whatever: still worth a colour
-        return "unknown"
+        return {}
 
 
 def aggregate():
@@ -109,7 +109,13 @@ def main(argv):
         sys.exit("usage: %s %s" % (argv[0], "|".join(sorted(VALID))))
     STATE.mkdir(parents=True, exist_ok=True)
     state = argv[1]
-    marker = STATE / (session_id() + ".state")
+    data = payload()
+    log = STATE / "events.log"
+    if log.exists() and log.stat().st_size > 200_000:
+        log.unlink()
+    with log.open("a") as f:
+        f.write("%s %-9s %s\n" % (time.strftime("%H:%M:%S"), state, json.dumps(data)))
+    marker = STATE / ((data.get("session_id") or "unknown") + ".state")
     if state == "gone":
         marker.unlink(missing_ok=True)
     else:

@@ -71,7 +71,7 @@ sending — that delay is why a single command takes a couple of seconds.
 | --- | --- |
 | green | every session is idle |
 | yellow | at least one session is working |
-| red | at least one session wants you (question, permission prompt, idle nudge) |
+| red | at least one session wants you (question, plan approval, permission prompt) |
 
 Red beats yellow beats green. Each session keeps one file under
 `~/.claude/traffic-light/`, named by its session id, and the colour is the
@@ -84,30 +84,38 @@ it. `StopFailure` clears it immediately when Claude Code does report the
 interrupt. Markers are deleted outright after 8 h.
 
 Already merged into `~/.claude/settings.json` (backup alongside it as
-`settings.json.bak-*`). The five entries:
+`settings.json.bak-*`). The seven entries:
 
 ```json
 {
   "hooks": {
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py busy"}]}],
-    "PostToolUse":      [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py busy"}]}],
+    "UserPromptSubmit":  [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py busy"}]}],
+    "PostToolUse":       [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py busy"}]}],
     "PreToolUse":        [{"matcher": "AskUserQuestion|ExitPlanMode",
                            "hooks": [{"type": "command", "command": "/path/to/script/hook.py attention"}]}],
     "PermissionRequest": [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py attention"}]}],
-    "Notification":     [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py attention"}]}],
-    "Stop":             [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py idle"}]}],
-    "SessionEnd":       [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py gone"}]}]
+    "Stop":              [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py idle"}]}],
+    "StopFailure":       [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py idle"}]}],
+    "SessionEnd":        [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py gone"}]}]
   }
 }
 ```
 
-`PreToolUse` on `AskUserQuestion` is what makes red immediate: `Notification`
-alone fires only after Claude Code's idle threshold, so the light lagged the
-question by a good few seconds. `PermissionRequest` covers prompts, and
-`Notification` still catches the idle nudge.
+`PreToolUse` on `AskUserQuestion` is what makes red immediate, and
+`PermissionRequest` covers permission prompts. `PostToolUse` turns red back to
+yellow: once you answer, the next tool call proves the session is working again.
 
-`PostToolUse` is what turns red back to yellow: once you answer, the next tool
-call proves the session is working again.
+**Not `Notification`.** It looks like the obvious red trigger and it is a trap:
+besides permission prompts it also fires the "waiting for your input" nudge
+after ~60 s, so an instance sitting at an empty prompt paints the light red
+while doing nothing, and no later event in that session ever clears it. It is
+redundant anyway — measured, `PreToolUse` and `PermissionRequest` both land ~6 s
+earlier.
+
+Every hook fire is appended to `~/.claude/traffic-light/events.log` with its
+payload (dropped past 200 kB). That log is what identified the stray red above:
+the marker holding it belonged to a different session id than the one doing the
+work.
 
 The hook writes its state file, then forks a detached child for the serial
 write, so it never adds latency to a turn. Concurrent sessions serialise on a
