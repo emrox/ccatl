@@ -22,14 +22,22 @@ def find_port():
     return ports[0]
 
 
+def send(char, port=None, wait=2.0):
+    """Send one command byte and return the board's ack (empty string if none)."""
+    with serial.Serial(port or find_port(), 9600, timeout=2) as link:
+        # ponytail: opening the port asserts DTR, which resets the Uno and costs
+        # ~2 s of dark LEDs. A 10 uF cap between RESET and GND kills the
+        # auto-reset; then wait can drop to 0.
+        time.sleep(wait)
+        link.write(char.encode())
+        return link.readline().decode().strip()
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] not in CMDS:
         sys.exit("usage: %s %s [port]" % (argv[0], "|".join(CMDS)))
     port = argv[2] if len(argv) > 2 else find_port()
-    with serial.Serial(port, 9600, timeout=2) as link:
-        time.sleep(2)  # opening the port asserts DTR, which resets the Uno
-        link.write(CMDS[argv[1]].encode())
-        print(link.readline().decode().strip() or "no ack from board")
+    print(send(CMDS[argv[1]], port) or "no ack from board")
 
 
 if __name__ == "__main__":

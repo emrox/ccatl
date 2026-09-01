@@ -62,3 +62,54 @@ sending — that delay is why a single command takes a couple of seconds.
    light and the byte should echo back. Ack but no light means that LED is in
    backwards — flip it.
 3. `./light.py red`, then the other three commands.
+
+## Claude Code hook
+
+`hook.py` drives the light from the state of every running Claude Code session:
+
+| Colour | Meaning |
+| --- | --- |
+| green | every session is idle |
+| yellow | at least one session is working |
+| red | at least one session wants you (question, permission prompt, idle nudge) |
+
+Red beats yellow beats green. Each session keeps one file under
+`~/.claude/traffic-light/`, named by its session id, and the colour is the
+highest-priority state present. Files are pruned after 8 h so a session killed
+without a `SessionEnd` cannot hold the light hostage.
+
+Already merged into `~/.claude/settings.json` (backup alongside it as
+`settings.json.bak-*`). The five entries:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py busy"}]}],
+    "PostToolUse":      [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py busy"}]}],
+    "Notification":     [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py attention"}]}],
+    "Stop":             [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py idle"}]}],
+    "SessionEnd":       [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py gone"}]}]
+  }
+}
+```
+
+`PostToolUse` is what turns red back to yellow: once you answer, the next tool
+call proves the session is working again.
+
+The hook writes its state file, then forks a detached child for the serial
+write, so it never adds latency to a turn. Concurrent sessions serialise on a
+`flock`, and a cached last colour means a repeated state costs nothing.
+
+Test it by hand:
+
+```sh
+echo '{"session_id":"test"}' | ./hook.py attention   # red
+echo '{"session_id":"test"}' | ./hook.py gone        # back to green
+```
+
+### The 2 s reset
+
+Opening the serial port asserts DTR, which resets the Uno: the LEDs go dark for
+about 2 s on every colour change. A 10 µF capacitor between `RESET` and `GND`
+(negative leg to GND) disables the auto-reset; with it fitted, drop the `wait`
+default in `light.py`'s `send()` to `0` and colour changes become instant.
