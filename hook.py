@@ -28,6 +28,9 @@ from light import find_port, hold, send  # noqa: E402
 
 STATE = Path.home() / ".claude" / "traffic-light"
 STALE = 8 * 3600  # a session killed without SessionEnd stops counting after this
+IDLE_AFTER = 300  # untouched that long and a session counts as idle: cancelling a
+                  # turn fires no hook at all. Raise it if a long single tool call
+                  # (a slow build, a big test run) turns the light green too early.
 COLORS = [("attention", "R"), ("busy", "Y")]  # first match wins, else green
 VALID = {"busy", "attention", "idle", "gone"}
 
@@ -44,10 +47,12 @@ def aggregate():
     states = set()
     for f in STATE.glob("*.state"):
         try:
-            if now - f.stat().st_mtime > STALE:
+            age = now - f.stat().st_mtime
+            if age > STALE:
                 f.unlink()
                 continue
-            states.add(f.read_text().strip())
+            if age < IDLE_AFTER:
+                states.add(f.read_text().strip())
         except OSError:  # another session pruned it first
             pass
     for state, color in COLORS:
@@ -75,7 +80,7 @@ def ensure_keeper():
         return
     os.setsid()
     try:
-        hold(find_port())  # holds the port, and keeper.lock with it, until unplugged
+        hold(find_port(), tick=paint)  # holds port and keeper.lock until unplugged
     finally:
         os._exit(0)
 

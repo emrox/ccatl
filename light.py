@@ -43,12 +43,19 @@ def send(char, port=None):
         return ack.decode().strip()
 
 
-def hold(port=None):
-    """Keep the port open until the board goes away, so nothing resets it."""
+def hold(port=None, tick=None, every=5):
+    """Keep the port open until the board goes away, so nothing resets it.
+
+    tick() runs every `every` seconds while holding. That is the only clock in
+    the system: without it, state no event ever reports -- an interrupted turn,
+    say -- would sit on the board until the next hook happens to fire.
+    """
     port = port or find_port()
     with serial.Serial(port, 9600, timeout=1):
         while os.path.exists(port):
-            time.sleep(5)
+            if tick:
+                tick()
+            time.sleep(every)
 
 
 def main(argv):

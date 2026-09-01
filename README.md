@@ -75,8 +75,13 @@ sending — that delay is why a single command takes a couple of seconds.
 
 Red beats yellow beats green. Each session keeps one file under
 `~/.claude/traffic-light/`, named by its session id, and the colour is the
-highest-priority state present. Files are pruned after 8 h so a session killed
-without a `SessionEnd` cannot hold the light hostage.
+highest-priority state present.
+
+Cancelling a turn fires no hook, so a session that goes quiet for
+`hook.IDLE_AFTER` (5 min) counts as idle, and the keeper re-evaluates every 5 s
+— that is what eventually clears a cancelled turn even though nothing reported
+it. `StopFailure` clears it immediately when Claude Code does report the
+interrupt. Markers are deleted outright after 8 h.
 
 Already merged into `~/.claude/settings.json` (backup alongside it as
 `settings.json.bak-*`). The five entries:
@@ -122,6 +127,9 @@ colour change would cost ~2 s of dark LEDs. While *any* process holds the port
 open, further opens no longer reset the board, so the first paint forks a
 keeper that does nothing but sit on the port. Measured: 2.1 s for the first
 change, 50-80 ms for every one after it.
+
+The keeper doubles as the system's only clock: every 5 s it recomputes the
+colour, which is how a cancelled turn or any other missed event heals itself.
 
 The keeper owns `~/.claude/traffic-light/keeper.lock` for as long as it lives.
 Unplug the board and it exits, releasing the lock; the next colour change
