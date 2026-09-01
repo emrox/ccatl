@@ -93,6 +93,12 @@ Install them with:
 `install.sh` points the entries at the `hook.py` next to it, so a clone anywhere
 works and moving the checkout just means running it again — it strips any older
 copy of the hooks first, whatever path they used, and is safe to run twice.
+
+With `uv` on PATH the entries are bare paths and `hook.py`'s `uv run --script`
+shebang pulls pyserial in by itself. Without it they are written as
+`/usr/bin/python3 /path/hook.py busy` and pyserial has to be installed the
+usual way — the installer says so if it is missing. Install again after getting
+`uv` and the entries switch over.
 Both scripts back up `settings.json` first and leave every other hook in the
 file alone. `uninstall.sh` additionally turns the LEDs off, stops the keeper and
 removes `~/.claude/traffic-light/`. Restart running sessions afterwards.

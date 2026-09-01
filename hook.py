@@ -17,6 +17,7 @@ over the port or repainting a colour that is already showing.
 """
 
 import fcntl
+import importlib.util
 import json
 import os
 import shutil
@@ -26,7 +27,6 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from light import find_port, hold, send  # noqa: E402
 
 SETTINGS = Path.home() / ".claude" / "settings.json"
 EVENTS = [  # (event, matcher, state) -- what install.sh writes into SETTINGS
@@ -81,6 +81,8 @@ def ensure_keeper():
     keeper owns keeper.lock for as long as it lives, so a dead one (board
     unplugged, process killed) frees the lock and the next paint respawns it.
     """
+    from light import find_port, hold
+
     lock_fd = os.open(str(STATE / "keeper.lock"), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -98,6 +100,8 @@ def ensure_keeper():
 
 
 def paint():
+    from light import send
+
     ensure_keeper()  # before the lock below: a forked keeper must not inherit it
     with open(STATE / "lock", "w") as lock:
         for _ in range(50):  # bounded: a wedged painter must not pile up hooks behind it
@@ -116,14 +120,30 @@ def paint():
         last.write_text(want)
 
 
+def ours(command):
+    """Our hook entries, in either the uv shebang form or the python3 one."""
+    words = command.split()
+    return any(w.endswith("hook.py") for w in words) and words[-1] in VALID
+
+
+def command(state):
+    """How settings.json should invoke us.
+
+    With uv present the shebang handles the pyserial dependency itself; without
+    it, fall back to whatever python3 is on PATH and hope pyserial is there.
+    """
+    me = str(Path(__file__).resolve())
+    if shutil.which("uv"):
+        return "%s %s" % (me, state)
+    return "%s %s %s" % (shutil.which("python3") or sys.executable, me, state)
+
+
 def strip(hooks):
     """Remove our entries from a settings hook table, whatever path they use."""
     for event in list(hooks):
         hooks[event] = [
             g for g in hooks[event]
-            if not any(h.get("command", "").split()[0].endswith("hook.py")
-                       and h.get("command", "").split()[-1] in VALID
-                       for h in g.get("hooks", []))
+            if not any(ours(h.get("command", "")) for h in g.get("hooks", []))
         ]
         if not hooks[event]:
             del hooks[event]
@@ -139,9 +159,8 @@ def edit_settings(install):
     hooks = settings.setdefault("hooks", {})
     strip(hooks)  # also clears an install from an older checkout
     if install:
-        me = str(Path(__file__).resolve())
         for event, matcher, state in EVENTS:
-            group = {"hooks": [{"type": "command", "command": "%s %s" % (me, state)}]}
+            group = {"hooks": [{"type": "command", "command": command(state)}]}
             if matcher:
                 group["matcher"] = matcher
             hooks.setdefault(event, []).append(group)
@@ -151,8 +170,14 @@ def edit_settings(install):
     SETTINGS.write_text(json.dumps(settings, indent=2) + "\n")
     print("%s %d hooks in %s" % ("installed" if install else "removed",
                                  len(EVENTS), SETTINGS))
+    if install and not shutil.which("uv"):
+        print("uv not found, hooks will run under python3 --")
+        if not importlib.util.find_spec("serial"):
+            print("  pyserial is missing too: pip install pyserial")
     if not install:
         try:
+            from light import send
+
             send("O")  # leave the board dark rather than stuck on a stale colour
         except Exception:
             pass
