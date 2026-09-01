@@ -83,8 +83,21 @@ Cancelling a turn fires no hook, so a session that goes quiet for
 it. `StopFailure` clears it immediately when Claude Code does report the
 interrupt. Markers are deleted outright after 8 h.
 
-Already merged into `~/.claude/settings.json` (backup alongside it as
-`settings.json.bak-*`). The seven entries:
+Install them with:
+
+```sh
+./install.sh     # writes the entries into ~/.claude/settings.json
+./uninstall.sh   # takes them out again
+```
+
+`install.sh` points the entries at the `hook.py` next to it, so a clone anywhere
+works and moving the checkout just means running it again — it strips any older
+copy of the hooks first, whatever path they used, and is safe to run twice.
+Both scripts back up `settings.json` first and leave every other hook in the
+file alone. `uninstall.sh` additionally turns the LEDs off, stops the keeper and
+removes `~/.claude/traffic-light/`. Restart running sessions afterwards.
+
+The seven entries, for reference:
 
 ```json
 {

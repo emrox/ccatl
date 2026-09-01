@@ -19,6 +19,8 @@ over the port or repainting a colour that is already showing.
 import fcntl
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -26,6 +28,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from light import find_port, hold, send  # noqa: E402
 
+SETTINGS = Path.home() / ".claude" / "settings.json"
+EVENTS = [  # (event, matcher, state) -- what install.sh writes into SETTINGS
+    ("UserPromptSubmit", None, "busy"),
+    ("PostToolUse", None, "busy"),
+    ("PreToolUse", "AskUserQuestion|ExitPlanMode", "attention"),
+    ("PermissionRequest", None, "attention"),
+    ("Stop", None, "idle"),
+    ("StopFailure", None, "idle"),
+    ("SessionEnd", None, "gone"),
+]
 STATE = Path.home() / ".claude" / "traffic-light"
 STALE = 8 * 3600  # a session killed without SessionEnd stops counting after this
 IDLE_AFTER = 300  # untouched that long and a session counts as idle: cancelling a
@@ -69,7 +81,7 @@ def ensure_keeper():
     keeper owns keeper.lock for as long as it lives, so a dead one (board
     unplugged, process killed) frees the lock and the next paint respawns it.
     """
-    lock_fd = os.open(str(STATE / "keeper.lock"), os.O_CREAT | os.O_RDWR)
+    lock_fd = os.open(str(STATE / "keeper.lock"), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -104,9 +116,59 @@ def paint():
         last.write_text(want)
 
 
+def strip(hooks):
+    """Remove our entries from a settings hook table, whatever path they use."""
+    for event in list(hooks):
+        hooks[event] = [
+            g for g in hooks[event]
+            if not any(h.get("command", "").split()[0].endswith("hook.py")
+                       and h.get("command", "").split()[-1] in VALID
+                       for h in g.get("hooks", []))
+        ]
+        if not hooks[event]:
+            del hooks[event]
+
+
+def edit_settings(install):
+    """Add or remove the hooks in ~/.claude/settings.json, backup first."""
+    settings = json.loads(SETTINGS.read_text()) if SETTINGS.exists() else {}
+    if SETTINGS.exists():
+        backup = SETTINGS.with_name("settings.json.bak-%s" % time.strftime("%Y%m%d%H%M%S"))
+        backup.write_text(SETTINGS.read_text())
+        print("backup: %s" % backup)
+    hooks = settings.setdefault("hooks", {})
+    strip(hooks)  # also clears an install from an older checkout
+    if install:
+        me = str(Path(__file__).resolve())
+        for event, matcher, state in EVENTS:
+            group = {"hooks": [{"type": "command", "command": "%s %s" % (me, state)}]}
+            if matcher:
+                group["matcher"] = matcher
+            hooks.setdefault(event, []).append(group)
+    if not hooks:
+        del settings["hooks"]
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS.write_text(json.dumps(settings, indent=2) + "\n")
+    print("%s %d hooks in %s" % ("installed" if install else "removed",
+                                 len(EVENTS), SETTINGS))
+    if not install:
+        try:
+            send("O")  # leave the board dark rather than stuck on a stale colour
+        except Exception:
+            pass
+        # states only, so this never matches the uninstall process itself; by name
+        # rather than full path, so a keeper started via a relative path still dies
+        subprocess.run(["pkill", "-f", "hook.py (%s)" % "|".join(sorted(VALID))])
+        shutil.rmtree(STATE, ignore_errors=True)
+        print("stopped the keeper and removed %s" % STATE)
+    print("restart running Claude Code sessions to pick this up")
+
+
 def main(argv):
+    if len(argv) > 1 and argv[1] in ("install", "uninstall"):
+        return edit_settings(argv[1] == "install")
     if len(argv) < 2 or argv[1] not in VALID:
-        sys.exit("usage: %s %s" % (argv[0], "|".join(sorted(VALID))))
+        sys.exit("usage: %s %s|install|uninstall" % (argv[0], "|".join(sorted(VALID))))
     STATE.mkdir(parents=True, exist_ok=True)
     state = argv[1]
     data = payload()
