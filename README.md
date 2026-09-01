@@ -86,12 +86,20 @@ Already merged into `~/.claude/settings.json` (backup alongside it as
   "hooks": {
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py busy"}]}],
     "PostToolUse":      [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py busy"}]}],
+    "PreToolUse":        [{"matcher": "AskUserQuestion|ExitPlanMode",
+                           "hooks": [{"type": "command", "command": "/path/to/script/hook.py attention"}]}],
+    "PermissionRequest": [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py attention"}]}],
     "Notification":     [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py attention"}]}],
     "Stop":             [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py idle"}]}],
     "SessionEnd":       [{"hooks": [{"type": "command", "command": "/path/to/script/hook.py gone"}]}]
   }
 }
 ```
+
+`PreToolUse` on `AskUserQuestion` is what makes red immediate: `Notification`
+alone fires only after Claude Code's idle threshold, so the light lagged the
+question by a good few seconds. `PermissionRequest` covers prompts, and
+`Notification` still catches the idle nudge.
 
 `PostToolUse` is what turns red back to yellow: once you answer, the next tool
 call proves the session is working again.
